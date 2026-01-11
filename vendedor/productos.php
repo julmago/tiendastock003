@@ -112,13 +112,26 @@ if ($action === 'list') {
 }
 
 if ($action === 'new') {
-  $providerProducts = $pdo->query("
-    SELECT pp.id, pp.title, pp.base_price, p.display_name AS provider_name
-    FROM provider_products pp
-    JOIN providers p ON p.id=pp.provider_id
-    WHERE pp.status='active' AND p.status='active'
-    ORDER BY pp.id DESC LIMIT 200
-  ")->fetchAll();
+  $providerQuery = trim((string)($_GET['provider_q'] ?? ''));
+  $providerProducts = [];
+  if ($providerQuery !== '') {
+    $like = "%{$providerQuery}%";
+    $searchSt = $pdo->prepare("
+      SELECT pp.id, pp.title, pp.sku, pp.universal_code, pp.base_price, p.display_name AS provider_name,
+             COALESCE(SUM(GREATEST(ws.qty_available - ws.qty_reserved,0)),0) AS stock
+      FROM provider_products pp
+      JOIN providers p ON p.id=pp.provider_id
+      LEFT JOIN warehouse_stock ws ON ws.provider_product_id = pp.id
+      WHERE pp.status='active' AND p.status='active'
+        AND (pp.title LIKE ? OR pp.sku LIKE ? OR pp.universal_code LIKE ?)
+      GROUP BY pp.id, pp.title, pp.sku, pp.universal_code, pp.base_price, p.display_name
+      HAVING stock > 0
+      ORDER BY pp.id DESC
+      LIMIT 20
+    ");
+    $searchSt->execute([$like, $like, $like]);
+    $providerProducts = $searchSt->fetchAll();
+  }
 
   echo "<h3>Crear desde cero</h3>
   <form method='post'>
@@ -132,15 +145,47 @@ if ($action === 'new') {
   </form><hr>";
 
   echo "<h3>Copiar desde proveedor</h3>
-  <form method='post'>
-  <input type='hidden' name='csrf' value='".h(csrf_token())."'>
-  <input type='hidden' name='action' value='copy'>
-  <select name='provider_product_id' style='width:780px'>
-  <option value='0'>-- elegir --</option>";
-  foreach($providerProducts as $pp){
-    echo "<option value='".h((string)$pp['id'])."'>#".h((string)$pp['id'])." ".h($pp['provider_name'])." | ".h($pp['title'])." ($".h((string)$pp['base_price']).")</option>";
+  <form method='get' action='productos.php'>
+  <input type='hidden' name='action' value='new'>
+  <input type='hidden' name='store_id' value='".h((string)$storeId)."'>
+  <input name='provider_q' placeholder='Buscar producto del proveedor...' value='".h($providerQuery)."' style='width:420px'>
+  <button>Buscar</button>
+  </form>";
+
+  echo "<table border='1' cellpadding='6' cellspacing='0' style='margin-top:10px; width:100%; max-width:1200px;'>
+  <tr>
+    <th>Proveedor</th>
+    <th>Título</th>
+    <th>SKU</th>
+    <th>Código universal</th>
+    <th>Stock</th>
+    <th>Precio</th>
+    <th>Acciones</th>
+  </tr>";
+
+  if (!$providerProducts) {
+    echo "<tr><td colspan='7'>No se encontraron productos.</td></tr>";
+  } else {
+    foreach ($providerProducts as $pp) {
+      $priceTxt = ($pp['base_price'] !== null && $pp['base_price'] !== '') ? '$'.h(number_format((float)$pp['base_price'],2,',','.')) : '';
+      echo "<tr>
+        <td>".h($pp['provider_name'])."</td>
+        <td>".h($pp['title'])."</td>
+        <td>".h($pp['sku'] ?? '')."</td>
+        <td>".h($pp['universal_code'] ?? '')."</td>
+        <td>".h((string)$pp['stock'])."</td>
+        <td>".$priceTxt."</td>
+        <td>
+          <form method='post' action='productos.php?action=new&store_id=".h((string)$storeId)."' style='margin:0;'>
+            <input type='hidden' name='csrf' value='".h(csrf_token())."'>
+            <input type='hidden' name='action' value='copy'>
+            <input type='hidden' name='provider_product_id' value='".h((string)$pp['id'])."'>
+            <button>Copiar</button>
+          </form>
+        </td>
+      </tr>";
+    }
   }
-  echo "</select> <button>Copiar</button>
-  </form><hr>";
+  echo "</table><hr>";
 }
 page_footer();
