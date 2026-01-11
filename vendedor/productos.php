@@ -40,26 +40,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
   }
 }
 
-if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'copy') {
-  $ppId = (int)($_POST['provider_product_id'] ?? 0);
-  if (!$ppId) $err="Elegí un producto de proveedor.";
-  else {
-    $pp = $pdo->prepare("SELECT title, description, sku, universal_code FROM provider_products WHERE id=? AND status='active'");
-    $pp->execute([$ppId]);
-    $row = $pp->fetch();
-    if (!$row) $err="Producto proveedor inválido.";
-    else {
-      $pdo->prepare("INSERT INTO store_products(store_id,title,sku,universal_code,description,status,own_stock_qty,own_stock_price,manual_price)
-                     VALUES(?,?,?,?,?, 'active',0,NULL,NULL)")
-          ->execute([$storeId,$row['title'],$row['sku']??null,$row['universal_code']??null,$row['description']??null]);
-      $spId = (int)$pdo->lastInsertId();
-      $pdo->prepare("INSERT IGNORE INTO store_product_sources(store_product_id,provider_product_id,enabled) VALUES(?,?,1)")
-          ->execute([$spId,$ppId]);
-      $msg="Copiado y vinculado al proveedor.";
-    }
-  }
-}
-
 page_header('Vendedor - Productos');
 if (!empty($msg)) echo "<p style='color:green'>".h($msg)."</p>";
 if (!empty($err)) echo "<p style='color:#b00'>".h($err)."</p>";
@@ -117,14 +97,14 @@ if ($action === 'new') {
   if ($providerQuery !== '') {
     $like = "%{$providerQuery}%";
     $searchSt = $pdo->prepare("
-      SELECT pp.id, pp.title, pp.sku, pp.universal_code, pp.base_price, p.display_name AS provider_name,
+      SELECT pp.id, pp.title, pp.sku, pp.universal_code, pp.base_price, pp.description, p.display_name AS provider_name,
              COALESCE(SUM(GREATEST(ws.qty_available - ws.qty_reserved,0)),0) AS stock
       FROM provider_products pp
       JOIN providers p ON p.id=pp.provider_id
       LEFT JOIN warehouse_stock ws ON ws.provider_product_id = pp.id
       WHERE pp.status='active' AND p.status='active'
         AND (pp.title LIKE ? OR pp.sku LIKE ? OR pp.universal_code LIKE ?)
-      GROUP BY pp.id, pp.title, pp.sku, pp.universal_code, pp.base_price, p.display_name
+      GROUP BY pp.id, pp.title, pp.sku, pp.universal_code, pp.base_price, pp.description, p.display_name
       HAVING stock > 0
       ORDER BY pp.id DESC
       LIMIT 20
@@ -134,13 +114,14 @@ if ($action === 'new') {
   }
 
   echo "<h3>Crear desde cero</h3>
-  <form method='post'>
+  <form method='post' id='create-form'>
   <input type='hidden' name='csrf' value='".h(csrf_token())."'>
   <input type='hidden' name='action' value='create'>
-  <p>Título: <input name='title' style='width:520px'></p>
-  <p>SKU: <input name='sku' style='width:220px'></p>
-  <p>Código universal (8-14 dígitos): <input name='universal_code' style='width:220px'></p>
-  <p>Descripción:<br><textarea name='description' rows='3' style='width:90%'></textarea></p>
+  <p>Título: <input id='create-title' name='title' style='width:520px'></p>
+  <p>SKU: <input id='create-sku' name='sku' style='width:220px'></p>
+  <p>Código universal (8-14 dígitos): <input id='create-universal' name='universal_code' style='width:220px'></p>
+  <p>Descripción:<br><textarea id='create-description' name='description' rows='3' style='width:90%'></textarea></p>
+  <p id='copy-message' style='color:green; display:none;'></p>
   <button>Crear</button>
   </form><hr>";
 
@@ -176,16 +157,45 @@ if ($action === 'new') {
         <td>".h((string)$pp['stock'])."</td>
         <td>".$priceTxt."</td>
         <td>
-          <form method='post' action='productos.php?action=new&store_id=".h((string)$storeId)."' style='margin:0;'>
-            <input type='hidden' name='csrf' value='".h(csrf_token())."'>
-            <input type='hidden' name='action' value='copy'>
-            <input type='hidden' name='provider_product_id' value='".h((string)$pp['id'])."'>
-            <button>Copiar</button>
-          </form>
+          <button type='button' class='copy-provider-btn'
+            data-title='".h($pp['title'])."'
+            data-sku='".h($pp['sku'] ?? '')."'
+            data-universal='".h($pp['universal_code'] ?? '')."'
+            data-description='".h($pp['description'] ?? '')."'
+          >Copiar</button>
         </td>
       </tr>";
     }
   }
-  echo "</table><hr>";
+  echo "</table><hr>
+  <script>
+  (function() {
+    var buttons = document.querySelectorAll('.copy-provider-btn');
+    if (!buttons.length) return;
+    var titleInput = document.getElementById('create-title');
+    var skuInput = document.getElementById('create-sku');
+    var universalInput = document.getElementById('create-universal');
+    var descriptionInput = document.getElementById('create-description');
+    var message = document.getElementById('copy-message');
+    var form = document.getElementById('create-form');
+
+    buttons.forEach(function(button) {
+      button.addEventListener('click', function() {
+        if (titleInput) titleInput.value = button.dataset.title || '';
+        if (skuInput) skuInput.value = button.dataset.sku || '';
+        if (universalInput) universalInput.value = button.dataset.universal || '';
+        if (descriptionInput) descriptionInput.value = button.dataset.description || '';
+        if (message) {
+          message.textContent = 'Datos cargados desde proveedor. Revisá y presioná Crear para publicar.';
+          message.style.display = 'block';
+        }
+        if (form && form.scrollIntoView) {
+          form.scrollIntoView({behavior: 'smooth', block: 'start'});
+        }
+        if (titleInput && titleInput.focus) titleInput.focus();
+      });
+    });
+  })();
+  </script>";
 }
 page_footer();
