@@ -17,6 +17,17 @@ $storeSt->execute([(int)$retailer['id']]);
 $currentStore = $storeSt->fetch();
 if (!$currentStore) { page_header('Productos'); echo "<p>Primero creá tu tienda minorista.</p>"; page_footer(); exit; }
 
+$linkedWholesalerId = 0;
+$whStore = null;
+$linkSt = $pdo->prepare("SELECT wholesaler_id FROM retailer_wholesaler WHERE retailer_id=? LIMIT 1");
+$linkSt->execute([(int)$retailer['id']]);
+$linkedWholesalerId = (int)($linkSt->fetch()['wholesaler_id'] ?? 0);
+if ($linkedWholesalerId > 0) {
+  $whStoreSt = $pdo->prepare("SELECT id, name FROM stores WHERE wholesaler_id=? AND store_type='wholesale' LIMIT 1");
+  $whStoreSt->execute([$linkedWholesalerId]);
+  $whStore = $whStoreSt->fetch();
+}
+
 $action = $_GET['action'] ?? 'list';
 if (!in_array($action, ['list', 'new'], true)) $action = 'list';
 $listUrl = "productos.php?action=list";
@@ -45,6 +56,17 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
     }
     $copy_source_id = (int)($copy_payload['product_id'] ?? 0);
     $copy_images = is_array($copy_payload['images'] ?? null) ? $copy_payload['images'] : [];
+    if ($copy_source_id > 0 && $whStore) {
+      $sourceSt = $pdo->prepare("SELECT id FROM store_products WHERE id=? AND store_id=? LIMIT 1");
+      $sourceSt->execute([$copy_source_id, (int)$whStore['id']]);
+      if (!$sourceSt->fetchColumn()) {
+        $copy_source_id = 0;
+        $copy_images = [];
+      }
+    } else {
+      $copy_source_id = 0;
+      $copy_images = [];
+    }
 
     $images_order_raw = trim((string)($_POST['images_order'] ?? ''));
     $order_tokens = $images_order_raw !== '' ? array_filter(array_map('trim', explode(',', $images_order_raw))) : [];
@@ -174,17 +196,6 @@ if ($action === 'new') {
   $wholesalerProducts = [];
   $wholesalerProductImages = [];
 
-  $linkSt = $pdo->prepare("SELECT wholesaler_id FROM retailer_wholesaler WHERE retailer_id=? LIMIT 1");
-  $linkSt->execute([(int)$retailer['id']]);
-  $linkedWholesalerId = (int)($linkSt->fetch()['wholesaler_id'] ?? 0);
-
-  $whStore = null;
-  if ($linkedWholesalerId > 0) {
-    $whStoreSt = $pdo->prepare("SELECT id, name FROM stores WHERE wholesaler_id=? AND store_type='wholesale' LIMIT 1");
-    $whStoreSt->execute([$linkedWholesalerId]);
-    $whStore = $whStoreSt->fetch();
-  }
-
   if ($providerQuery !== '' && $whStore) {
     $like = "%{$providerQuery}%";
     $searchSt = $pdo->prepare("
@@ -281,7 +292,7 @@ if ($action === 'new') {
               data-sku='".h($pp['sku'] ?? '')."'
               data-universal='".h($pp['universal_code'] ?? '')."'
               data-description='".h($pp['description'] ?? '')."'
-              data-provider-id='".h((string)$pp['id'])."'
+              data-source-id='".h((string)$pp['id'])."'
               data-images='".$imagesJson."'
             >Copiar</button>
           </td>
@@ -402,7 +413,7 @@ if ($action === 'new') {
         if (skuInput) skuInput.value = button.dataset.sku || '';
         if (universalInput) universalInput.value = button.dataset.universal || '';
         if (descriptionInput) descriptionInput.value = button.dataset.description || '';
-        var providerId = button.dataset.providerId || '';
+        var sourceProductId = button.dataset.sourceId || '';
         var images = [];
         try {
           images = JSON.parse(button.dataset.images || '[]');
@@ -411,7 +422,7 @@ if ($action === 'new') {
         }
         if (copyPayloadInput) {
           copyPayloadInput.value = JSON.stringify({
-            product_id: providerId,
+            product_id: sourceProductId,
             images: images
           });
         }
@@ -424,8 +435,8 @@ if ($action === 'new') {
         if (imagesList && images && images.length) {
           images.forEach(function(image) {
             var base = image.filename_base || '';
-            if (!base || !providerId) return;
-            addImageItem('copy', base, '/uploads/store_products/' + providerId + '/' + base.replace(/(\\.[^.]+)$/, '_150$1'));
+            if (!base || !sourceProductId) return;
+            addImageItem('copy', base, '/uploads/store_products/' + sourceProductId + '/' + base.replace(/(\\.[^.]+)$/, '_150$1'));
           });
         }
         setPlaceholderIfEmpty();
