@@ -171,6 +171,10 @@ function product_images_process_uploads(PDO $pdo, string $owner_type, int $owner
       $image_errors[] = "Formato no soportado para {$name}.";
       continue;
     }
+    if ($image_type === IMAGETYPE_PNG && !function_exists('imagecreatefrompng')) {
+      $image_errors[] = "GD no tiene soporte para PNG ({$name}).";
+      continue;
+    }
 
     $ext = $image_type === IMAGETYPE_PNG ? 'png' : 'jpg';
     $base_name = bin2hex(random_bytes(16)).'.'.$ext;
@@ -228,6 +232,10 @@ function product_images_copy_files(string $source_dir, string $target_dir, strin
   }
 
   $extension = strtolower(pathinfo($base_name, PATHINFO_EXTENSION));
+  if ($extension === 'png' && !function_exists('imagecreatefrompng')) {
+    $image_errors[] = 'GD no tiene soporte para PNG.';
+    return false;
+  }
   $image_type = ($extension === 'png') ? IMAGETYPE_PNG : IMAGETYPE_JPEG;
   $sizes_desc = $image_sizes;
   rsort($sizes_desc);
