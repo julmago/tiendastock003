@@ -26,8 +26,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'delete_
     if (!$st->fetch()) {
       $err = "Producto inválido.";
     } else {
-      $upload_dir = __DIR__.'/../uploads/products/'.$product_id;
-      if (product_images_delete($pdo, $product_id, $image_id, $upload_dir, $image_sizes)) {
+      $upload_dir = __DIR__.'/../uploads/provider_products/'.$product_id;
+      if (product_images_delete($pdo, 'provider_product', $product_id, $image_id, $upload_dir, $image_sizes)) {
         $msg = "Imagen eliminada.";
       } else {
         $err = "Imagen inválida.";
@@ -69,12 +69,12 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'delete_
   }
 
   if (empty($err) && $product_id > 0) {
-    $upload_dir = __DIR__.'/../uploads/products/'.$product_id;
+    $upload_dir = __DIR__.'/../uploads/provider_products/'.$product_id;
     if (!is_dir($upload_dir)) {
       mkdir($upload_dir, 0775, true);
     }
-    product_images_process_uploads($pdo, $product_id, $_FILES['images'] ?? [], $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors);
-    product_images_apply_order($pdo, $product_id, (string)($_POST['images_order'] ?? ''));
+    product_images_process_uploads($pdo, 'provider_product', $product_id, $_FILES['images'] ?? [], $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors);
+    product_images_apply_order($pdo, 'provider_product', $product_id, (string)($_POST['images_order'] ?? ''));
   }
 }
 
@@ -89,7 +89,7 @@ if ($edit_id > 0) {
 }
 
 if ($edit_id > 0) {
-  $product_images = product_images_fetch($pdo, $edit_id);
+  $product_images = product_images_fetch($pdo, 'provider_product', $edit_id);
 }
 
 $rows = $pdo->prepare("SELECT id,title,sku,universal_code,base_price FROM provider_products WHERE provider_id=? ORDER BY id DESC");
@@ -120,7 +120,7 @@ echo "<form method='post' enctype='multipart/form-data'>
 if ($edit_product && $product_images) {
   foreach ($product_images as $index => $image) {
     $thumb = product_image_with_size($image['filename_base'], 150);
-    $thumb_url = "/uploads/products/".h((string)$edit_product['id'])."/".h($thumb);
+    $thumb_url = "/uploads/provider_products/".h((string)$edit_product['id'])."/".h($thumb);
     $cover_label = $index === 0 ? "Portada" : "";
     echo "<li data-id='".h((string)$image['id'])."'>
 <img src='".$thumb_url."' alt='' width='80' height='80'>

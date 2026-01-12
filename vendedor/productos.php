@@ -39,7 +39,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
                    VALUES(?,?,?,?,?, 'active',0,NULL,NULL)")
         ->execute([$storeId,$title,$sku?:null,$universalCode?:null,($_POST['description']??'')?:null]);
     $productId = (int)$pdo->lastInsertId();
-    $upload_dir = __DIR__.'/../uploads/products/'.$productId;
+    $upload_dir = __DIR__.'/../uploads/store_products/'.$productId;
     if (!is_dir($upload_dir)) {
       mkdir($upload_dir, 0775, true);
     }
@@ -60,8 +60,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
 
     $valid_copy_images = [];
     if ($copy_source_id > 0 && $copy_images) {
-      $st = $pdo->prepare("SELECT filename_base FROM product_images WHERE product_id=?");
-      $st->execute([$copy_source_id]);
+      $st = $pdo->prepare("SELECT filename_base FROM product_images WHERE owner_type=? AND owner_id=?");
+      $st->execute(['provider_product', $copy_source_id]);
       $existing_bases = $st->fetchAll(PDO::FETCH_COLUMN);
       $existing_bases = array_fill_keys($existing_bases, true);
       foreach ($copy_images as $image) {
@@ -78,7 +78,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
         if (isset($processed_uploads[$index])) {
           continue;
         }
-        product_images_process_uploads($pdo, $productId, $_FILES['images'] ?? [], $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors, [$index], $next_position, false);
+        product_images_process_uploads($pdo, 'store_product', $productId, $_FILES['images'] ?? [], $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors, [$index], $next_position, false);
         $processed_uploads[$index] = true;
         continue;
       }
@@ -95,7 +95,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
           }
         }
         if ($copy_source_id > 0 && $candidate) {
-          product_images_copy_from_provider($pdo, $copy_source_id, $productId, $candidate, __DIR__.'/../uploads/products', $image_sizes, $image_errors, $next_position);
+          $source_dir = __DIR__.'/../uploads/provider_products/'.$copy_source_id;
+          $target_dir = __DIR__.'/../uploads/store_products/'.$productId;
+          product_images_copy_from_provider($pdo, $copy_source_id, $productId, $candidate, $source_dir, $target_dir, $image_sizes, $image_errors, $next_position);
           $processed_copy[$base_name] = true;
         }
       }
@@ -109,7 +111,9 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
       }
     }
     if ($copy_source_id > 0 && $remaining_copy) {
-      product_images_copy_from_provider($pdo, $copy_source_id, $productId, $remaining_copy, __DIR__.'/../uploads/products', $image_sizes, $image_errors, $next_position);
+      $source_dir = __DIR__.'/../uploads/provider_products/'.$copy_source_id;
+      $target_dir = __DIR__.'/../uploads/store_products/'.$productId;
+      product_images_copy_from_provider($pdo, $copy_source_id, $productId, $remaining_copy, $source_dir, $target_dir, $image_sizes, $image_errors, $next_position);
     }
 
     $upload_files = $_FILES['images'] ?? [];
@@ -121,7 +125,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
       }
     }
     if ($remaining_upload_indices) {
-      product_images_process_uploads($pdo, $productId, $upload_files, $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors, $remaining_upload_indices, $next_position, false);
+      product_images_process_uploads($pdo, 'store_product', $productId, $upload_files, $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors, $remaining_upload_indices, $next_position, false);
     }
 
     $msg="Producto creado.";
@@ -207,11 +211,11 @@ if ($action === 'new') {
   if ($providerProducts) {
     $providerIds = array_map('intval', array_column($providerProducts, 'id'));
     $placeholders = implode(',', array_fill(0, count($providerIds), '?'));
-    $imgSt = $pdo->prepare("SELECT product_id, filename_base, position FROM product_images WHERE product_id IN ($placeholders) ORDER BY position ASC");
+    $imgSt = $pdo->prepare("SELECT owner_id, filename_base, position FROM product_images WHERE owner_type='provider_product' AND owner_id IN ($placeholders) ORDER BY position ASC");
     $imgSt->execute($providerIds);
     $rows = $imgSt->fetchAll();
     foreach ($rows as $row) {
-      $pid = (int)$row['product_id'];
+      $pid = (int)$row['owner_id'];
       if (!isset($providerProductImages[$pid])) {
         $providerProductImages[$pid] = [];
       }
@@ -423,7 +427,7 @@ if ($action === 'new') {
           images.forEach(function(image) {
             var base = image.filename_base || '';
             if (!base || !providerId) return;
-            addImageItem('copy', base, '/uploads/products/' + providerId + '/' + base.replace(/(\\.[^.]+)$/, '_150$1'));
+            addImageItem('copy', base, '/uploads/provider_products/' + providerId + '/' + base.replace(/(\\.[^.]+)$/, '_150$1'));
           });
         }
         setPlaceholderIfEmpty();

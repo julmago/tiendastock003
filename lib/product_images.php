@@ -34,18 +34,18 @@ function save_resized_square($square, int $size, string $dest, int $image_type):
   return $result;
 }
 
-function product_images_fetch(PDO $pdo, int $product_id): array {
-  $st = $pdo->prepare("SELECT id, filename_base, position FROM product_images WHERE product_id=? ORDER BY position ASC");
-  $st->execute([$product_id]);
+function product_images_fetch(PDO $pdo, string $owner_type, int $owner_id): array {
+  $st = $pdo->prepare("SELECT id, filename_base, position FROM product_images WHERE owner_type=? AND owner_id=? ORDER BY position ASC");
+  $st->execute([$owner_type, $owner_id]);
   return $st->fetchAll();
 }
 
-function product_images_apply_order(PDO $pdo, int $product_id, string $images_order_raw): void {
+function product_images_apply_order(PDO $pdo, string $owner_type, int $owner_id, string $images_order_raw): void {
   $images_order_raw = trim($images_order_raw);
   if ($images_order_raw === '') return;
   $ids = array_filter(array_map('intval', explode(',', $images_order_raw)));
-  $st = $pdo->prepare("SELECT id FROM product_images WHERE product_id=?");
-  $st->execute([$product_id]);
+  $st = $pdo->prepare("SELECT id FROM product_images WHERE owner_type=? AND owner_id=?");
+  $st->execute([$owner_type, $owner_id]);
   $existing_ids = $st->fetchAll(PDO::FETCH_COLUMN);
   $existing_ids = array_map('intval', $existing_ids);
   $ordered = [];
@@ -62,37 +62,37 @@ function product_images_apply_order(PDO $pdo, int $product_id, string $images_or
   $pdo->beginTransaction();
   $position = 1;
   foreach ($ordered as $id) {
-    $pdo->prepare("UPDATE product_images SET position=?, is_cover=? WHERE id=? AND product_id=?")
-        ->execute([$position, $position === 1 ? 1 : 0, $id, $product_id]);
+    $pdo->prepare("UPDATE product_images SET position=?, is_cover=? WHERE id=? AND owner_type=? AND owner_id=?")
+        ->execute([$position, $position === 1 ? 1 : 0, $id, $owner_type, $owner_id]);
     $position++;
   }
   $pdo->commit();
 }
 
-function product_images_resequence(PDO $pdo, int $product_id): void {
-  $st = $pdo->prepare("SELECT id FROM product_images WHERE product_id=? ORDER BY position ASC, id ASC");
-  $st->execute([$product_id]);
+function product_images_resequence(PDO $pdo, string $owner_type, int $owner_id): void {
+  $st = $pdo->prepare("SELECT id FROM product_images WHERE owner_type=? AND owner_id=? ORDER BY position ASC, id ASC");
+  $st->execute([$owner_type, $owner_id]);
   $ids = $st->fetchAll(PDO::FETCH_COLUMN);
   $pdo->beginTransaction();
   $position = 1;
   foreach ($ids as $id) {
-    $pdo->prepare("UPDATE product_images SET position=?, is_cover=? WHERE id=? AND product_id=?")
-        ->execute([$position, $position === 1 ? 1 : 0, $id, $product_id]);
+    $pdo->prepare("UPDATE product_images SET position=?, is_cover=? WHERE id=? AND owner_type=? AND owner_id=?")
+        ->execute([$position, $position === 1 ? 1 : 0, $id, $owner_type, $owner_id]);
     $position++;
   }
   $pdo->commit();
 }
 
-function product_images_delete(PDO $pdo, int $product_id, int $image_id, string $upload_dir, array $image_sizes): bool {
-  $st = $pdo->prepare("SELECT filename_base FROM product_images WHERE id=? AND product_id=? LIMIT 1");
-  $st->execute([$image_id, $product_id]);
+function product_images_delete(PDO $pdo, string $owner_type, int $owner_id, int $image_id, string $upload_dir, array $image_sizes): bool {
+  $st = $pdo->prepare("SELECT filename_base FROM product_images WHERE id=? AND owner_type=? AND owner_id=? LIMIT 1");
+  $st->execute([$image_id, $owner_type, $owner_id]);
   $filename_base = $st->fetchColumn();
   if (!$filename_base) {
     return false;
   }
 
-  $pdo->prepare("DELETE FROM product_images WHERE id=? AND product_id=? LIMIT 1")
-      ->execute([$image_id, $product_id]);
+  $pdo->prepare("DELETE FROM product_images WHERE id=? AND owner_type=? AND owner_id=? LIMIT 1")
+      ->execute([$image_id, $owner_type, $owner_id]);
 
   $files = [];
   foreach ($image_sizes as $size) {
@@ -106,7 +106,7 @@ function product_images_delete(PDO $pdo, int $product_id, int $image_id, string 
     }
   }
 
-  product_images_resequence($pdo, $product_id);
+  product_images_resequence($pdo, $owner_type, $owner_id);
   return true;
 }
 
@@ -132,7 +132,7 @@ function product_images_sort_indices(array $files, ?array $order, bool $append_r
   return $ordered;
 }
 
-function product_images_process_uploads(PDO $pdo, int $product_id, array $files, string $upload_dir, array $image_sizes, int $max_image_size_bytes, array &$image_errors, ?array $upload_order = null, ?int &$next_position = null, bool $append_remaining = true): int {
+function product_images_process_uploads(PDO $pdo, string $owner_type, int $owner_id, array $files, string $upload_dir, array $image_sizes, int $max_image_size_bytes, array &$image_errors, ?array $upload_order = null, ?int &$next_position = null, bool $append_remaining = true): int {
   if (empty($files['name'][0])) return $next_position ?? 0;
   if (!function_exists('imagecreatefromjpeg')) {
     $image_errors[] = 'GD no está disponible para procesar imágenes.';
@@ -140,8 +140,8 @@ function product_images_process_uploads(PDO $pdo, int $product_id, array $files,
   }
 
   if ($next_position === null) {
-    $st = $pdo->prepare("SELECT COALESCE(MAX(position), 0) FROM product_images WHERE product_id=?");
-    $st->execute([$product_id]);
+    $st = $pdo->prepare("SELECT COALESCE(MAX(position), 0) FROM product_images WHERE owner_type=? AND owner_id=?");
+    $st->execute([$owner_type, $owner_id]);
     $next_position = (int)$st->fetchColumn();
   }
 
@@ -211,8 +211,8 @@ function product_images_process_uploads(PDO $pdo, int $product_id, array $files,
     }
     $next_position++;
     $is_cover = $next_position === 1 ? 1 : 0;
-    $pdo->prepare("INSERT INTO product_images(product_id, filename_base, position, is_cover) VALUES(?,?,?,?)")
-        ->execute([$product_id, $base_name, $next_position, $is_cover]);
+    $pdo->prepare("INSERT INTO product_images(owner_type, owner_id, filename_base, position, is_cover) VALUES(?,?,?,?,?)")
+        ->execute([$owner_type, $owner_id, $base_name, $next_position, $is_cover]);
   }
 
   return $next_position;
@@ -276,17 +276,15 @@ function product_images_copy_files(string $source_dir, string $target_dir, strin
   return true;
 }
 
-function product_images_copy_from_provider(PDO $pdo, int $source_product_id, int $target_product_id, array $images, string $uploads_root, array $image_sizes, array &$image_errors, ?int &$next_position = null): int {
+function product_images_copy_from_provider(PDO $pdo, int $source_product_id, int $target_product_id, array $images, string $source_dir, string $target_dir, array $image_sizes, array &$image_errors, ?int &$next_position = null): int {
   if (!$images) return $next_position ?? 0;
 
   if ($next_position === null) {
-    $st = $pdo->prepare("SELECT COALESCE(MAX(position), 0) FROM product_images WHERE product_id=?");
-    $st->execute([$target_product_id]);
+    $st = $pdo->prepare("SELECT COALESCE(MAX(position), 0) FROM product_images WHERE owner_type=? AND owner_id=?");
+    $st->execute(['store_product', $target_product_id]);
     $next_position = (int)$st->fetchColumn();
   }
 
-  $source_dir = rtrim($uploads_root, '/').'/'.$source_product_id;
-  $target_dir = rtrim($uploads_root, '/').'/'.$target_product_id;
   $seen = [];
 
   foreach ($images as $image) {
@@ -300,8 +298,8 @@ function product_images_copy_from_provider(PDO $pdo, int $source_product_id, int
     }
     $next_position++;
     $is_cover = $next_position === 1 ? 1 : 0;
-    $pdo->prepare("INSERT INTO product_images(product_id, filename_base, position, is_cover) VALUES(?,?,?,?)")
-        ->execute([$target_product_id, $base_name, $next_position, $is_cover]);
+    $pdo->prepare("INSERT INTO product_images(owner_type, owner_id, filename_base, position, is_cover) VALUES(?,?,?,?,?)")
+        ->execute(['store_product', $target_product_id, $base_name, $next_position, $is_cover]);
   }
 
   return $next_position;
