@@ -11,6 +11,9 @@ $st->execute([(int)$_SESSION['uid']]);
 $retailer = $st->fetch();
 if (!$retailer) exit('Minorista inválido');
 $image_errors = [];
+$image_schema = product_images_schema($pdo);
+$images_available = product_images_ready($image_schema);
+$images_unavailable_message = "Imágenes: no disponible (falta migración)";
 
 $storeSt = $pdo->prepare("SELECT id, name, slug, store_type, markup_percent FROM stores WHERE retailer_id=? AND store_type='retail' LIMIT 1");
 $storeSt->execute([(int)$retailer['id']]);
@@ -44,104 +47,108 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'create'
                    VALUES(?,?,?,?,?, 'active',0,NULL,NULL)")
         ->execute([(int)$currentStore['id'],$title,$sku?:null,$universalCode?:null,($_POST['description']??'')?:null]);
     $productId = (int)$pdo->lastInsertId();
-    $upload_dir = __DIR__.'/../uploads/store_products/'.$productId;
-    if (!is_dir($upload_dir)) {
-      mkdir($upload_dir, 0775, true);
-    }
+    if ($images_available) {
+      $upload_dir = __DIR__.'/../uploads/store_products/'.$productId;
+      if (!is_dir($upload_dir)) {
+        mkdir($upload_dir, 0775, true);
+      }
 
-    $copy_payload_raw = trim((string)($_POST['copy_images_payload'] ?? ''));
-    $copy_payload = $copy_payload_raw !== '' ? json_decode($copy_payload_raw, true) : [];
-    if (!is_array($copy_payload)) {
-      $copy_payload = [];
-    }
-    $copy_source_id = (int)($copy_payload['product_id'] ?? 0);
-    $copy_images = is_array($copy_payload['images'] ?? null) ? $copy_payload['images'] : [];
-    if ($copy_source_id > 0 && $whStore) {
-      $sourceSt = $pdo->prepare("SELECT id FROM store_products WHERE id=? AND store_id=? LIMIT 1");
-      $sourceSt->execute([$copy_source_id, (int)$whStore['id']]);
-      if (!$sourceSt->fetchColumn()) {
+      $copy_payload_raw = trim((string)($_POST['copy_images_payload'] ?? ''));
+      $copy_payload = $copy_payload_raw !== '' ? json_decode($copy_payload_raw, true) : [];
+      if (!is_array($copy_payload)) {
+        $copy_payload = [];
+      }
+      $copy_source_id = (int)($copy_payload['product_id'] ?? 0);
+      $copy_images = is_array($copy_payload['images'] ?? null) ? $copy_payload['images'] : [];
+      if ($copy_source_id > 0 && $whStore) {
+        $sourceSt = $pdo->prepare("SELECT id FROM store_products WHERE id=? AND store_id=? LIMIT 1");
+        $sourceSt->execute([$copy_source_id, (int)$whStore['id']]);
+        if (!$sourceSt->fetchColumn()) {
+          $copy_source_id = 0;
+          $copy_images = [];
+        }
+      } else {
         $copy_source_id = 0;
         $copy_images = [];
       }
-    } else {
-      $copy_source_id = 0;
-      $copy_images = [];
-    }
 
-    $images_order_raw = trim((string)($_POST['images_order'] ?? ''));
-    $order_tokens = $images_order_raw !== '' ? array_filter(array_map('trim', explode(',', $images_order_raw))) : [];
-    $next_position = 0;
-    $processed_uploads = [];
-    $processed_copy = [];
+      $images_order_raw = trim((string)($_POST['images_order'] ?? ''));
+      $order_tokens = $images_order_raw !== '' ? array_filter(array_map('trim', explode(',', $images_order_raw))) : [];
+      $next_position = 0;
+      $processed_uploads = [];
+      $processed_copy = [];
 
-    $valid_copy_images = [];
-    if ($copy_source_id > 0 && $copy_images) {
-      $st = $pdo->prepare("SELECT filename_base FROM product_images WHERE owner_type=? AND owner_id=?");
-      $st->execute(['store_product', $copy_source_id]);
-      $existing_bases = $st->fetchAll(PDO::FETCH_COLUMN);
-      $existing_bases = array_fill_keys($existing_bases, true);
-      foreach ($copy_images as $image) {
-        $base_name = $image['filename_base'] ?? '';
-        if ($base_name !== '' && isset($existing_bases[$base_name])) {
-          $valid_copy_images[] = ['filename_base' => $base_name];
-        }
-      }
-    }
-
-    foreach ($order_tokens as $token) {
-      if (strpos($token, 'upload:') === 0) {
-        $index = (int)substr($token, 7);
-        if (isset($processed_uploads[$index])) {
-          continue;
-        }
-        product_images_process_uploads($pdo, 'store_product', $productId, $_FILES['images'] ?? [], $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors, [$index], $next_position, false);
-        $processed_uploads[$index] = true;
-        continue;
-      }
-      if (strpos($token, 'copy:') === 0) {
-        $base_name = substr($token, 5);
-        if ($base_name === '' || isset($processed_copy[$base_name])) {
-          continue;
-        }
-        $candidate = [];
-        foreach ($valid_copy_images as $image) {
-          if (($image['filename_base'] ?? '') === $base_name) {
-            $candidate[] = $image;
-            break;
+      $valid_copy_images = [];
+      if ($copy_source_id > 0 && $copy_images) {
+        $st = $pdo->prepare("SELECT filename_base FROM product_images WHERE owner_type=? AND owner_id=?");
+        $st->execute(['store_product', $copy_source_id]);
+        $existing_bases = $st->fetchAll(PDO::FETCH_COLUMN);
+        $existing_bases = array_fill_keys($existing_bases, true);
+        foreach ($copy_images as $image) {
+          $base_name = $image['filename_base'] ?? '';
+          if ($base_name !== '' && isset($existing_bases[$base_name])) {
+            $valid_copy_images[] = ['filename_base' => $base_name];
           }
         }
-        if ($copy_source_id > 0 && $candidate) {
-          $source_dir = __DIR__.'/../uploads/store_products/'.$copy_source_id;
-          $target_dir = __DIR__.'/../uploads/store_products/'.$productId;
-          product_images_copy_from_store($pdo, $copy_source_id, $productId, $candidate, $source_dir, $target_dir, $image_sizes, $image_errors, $next_position);
-          $processed_copy[$base_name] = true;
+      }
+
+      foreach ($order_tokens as $token) {
+        if (strpos($token, 'upload:') === 0) {
+          $index = (int)substr($token, 7);
+          if (isset($processed_uploads[$index])) {
+            continue;
+          }
+          product_images_process_uploads($pdo, 'store_product', $productId, $_FILES['images'] ?? [], $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors, [$index], $next_position, false);
+          $processed_uploads[$index] = true;
+          continue;
+        }
+        if (strpos($token, 'copy:') === 0) {
+          $base_name = substr($token, 5);
+          if ($base_name === '' || isset($processed_copy[$base_name])) {
+            continue;
+          }
+          $candidate = [];
+          foreach ($valid_copy_images as $image) {
+            if (($image['filename_base'] ?? '') === $base_name) {
+              $candidate[] = $image;
+              break;
+            }
+          }
+          if ($copy_source_id > 0 && $candidate) {
+            $source_dir = __DIR__.'/../uploads/store_products/'.$copy_source_id;
+            $target_dir = __DIR__.'/../uploads/store_products/'.$productId;
+            product_images_copy_from_store($pdo, $copy_source_id, $productId, $candidate, $source_dir, $target_dir, $image_sizes, $image_errors, $next_position);
+            $processed_copy[$base_name] = true;
+          }
         }
       }
-    }
 
-    $remaining_copy = [];
-    foreach ($valid_copy_images as $image) {
-      $base_name = $image['filename_base'] ?? '';
-      if ($base_name !== '' && !isset($processed_copy[$base_name])) {
-        $remaining_copy[] = $image;
+      $remaining_copy = [];
+      foreach ($valid_copy_images as $image) {
+        $base_name = $image['filename_base'] ?? '';
+        if ($base_name !== '' && !isset($processed_copy[$base_name])) {
+          $remaining_copy[] = $image;
+        }
       }
-    }
-    if ($copy_source_id > 0 && $remaining_copy) {
-      $source_dir = __DIR__.'/../uploads/store_products/'.$copy_source_id;
-      $target_dir = __DIR__.'/../uploads/store_products/'.$productId;
-      product_images_copy_from_store($pdo, $copy_source_id, $productId, $remaining_copy, $source_dir, $target_dir, $image_sizes, $image_errors, $next_position);
-    }
+      if ($copy_source_id > 0 && $remaining_copy) {
+        $source_dir = __DIR__.'/../uploads/store_products/'.$copy_source_id;
+        $target_dir = __DIR__.'/../uploads/store_products/'.$productId;
+        product_images_copy_from_store($pdo, $copy_source_id, $productId, $remaining_copy, $source_dir, $target_dir, $image_sizes, $image_errors, $next_position);
+      }
 
-    $upload_files = $_FILES['images'] ?? [];
-    $upload_indices = product_images_sort_indices($upload_files, null);
-    $remaining_upload_indices = [];
-    foreach ($upload_indices as $index) {
-      if (!isset($processed_uploads[$index])) {
-        $remaining_upload_indices[] = $index;
+      $upload_files = $_FILES['images'] ?? [];
+      $upload_indices = product_images_sort_indices($upload_files, null);
+      $remaining_upload_indices = [];
+      foreach ($upload_indices as $index) {
+        if (!isset($processed_uploads[$index])) {
+          $remaining_upload_indices[] = $index;
+        }
       }
-    }
-    if ($remaining_upload_indices) {
-      product_images_process_uploads($pdo, 'store_product', $productId, $upload_files, $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors, $remaining_upload_indices, $next_position, false);
+      if ($remaining_upload_indices) {
+        product_images_process_uploads($pdo, 'store_product', $productId, $upload_files, $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors, $remaining_upload_indices, $next_position, false);
+      }
+    } else {
+      $image_errors[] = $images_unavailable_message;
     }
 
     $msg="Producto creado.";
@@ -212,7 +219,7 @@ if ($action === 'new') {
     $wholesalerProducts = $searchSt->fetchAll();
   }
 
-  if ($wholesalerProducts) {
+  if ($wholesalerProducts && $images_available) {
     $whIds = array_map('intval', array_column($wholesalerProducts, 'id'));
     $placeholders = implode(',', array_fill(0, count($whIds), '?'));
     $imgSt = $pdo->prepare("SELECT owner_id, filename_base, position FROM product_images WHERE owner_type='store_product' AND owner_id IN ($placeholders) ORDER BY position ASC");
@@ -241,6 +248,7 @@ if ($action === 'new') {
   <p>Descripción:<br><textarea id='create-description' name='description' rows='3' style='width:90%'></textarea></p>
   <fieldset>
   <legend>Imágenes</legend>
+  ".(!$images_available ? "<p style='color:#b00'>".h($images_unavailable_message)."</p>" : "")."
   <p><input type='file' name='images[]' id='images-input' multiple accept='image/*'></p>
   <ul id='images-list'>
     <li>No hay imágenes cargadas.</li>
@@ -277,7 +285,7 @@ if ($action === 'new') {
     } else {
       foreach ($wholesalerProducts as $pp) {
         $priceTxt = ($pp['own_stock_price'] !== null && $pp['own_stock_price'] !== '') ? '$'.h(number_format((float)$pp['own_stock_price'],2,',','.')) : '';
-        $images = $wholesalerProductImages[(int)$pp['id']] ?? [];
+        $images = $images_available ? ($wholesalerProductImages[(int)$pp['id']] ?? []) : [];
         $imagesJson = h(json_encode($images, JSON_HEX_TAG | JSON_HEX_APOS | JSON_HEX_AMP | JSON_HEX_QUOT));
         echo "<tr>
           <td>".h($pp['wholesaler_name'])."</td>
