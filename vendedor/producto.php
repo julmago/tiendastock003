@@ -67,6 +67,20 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'update_
   }
 }
 
+if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'delete_image') {
+  $image_id = isset($_POST['delete_image_id']) ? (int)$_POST['delete_image_id'] : 0;
+  if ($image_id <= 0) {
+    $err = "Imagen inválida.";
+  } else {
+    $upload_dir = __DIR__.'/../uploads/products/'.$productId;
+    if (product_images_delete($pdo, $productId, $image_id, $upload_dir, $image_sizes)) {
+      $msg = "Imagen eliminada.";
+    } else {
+      $err = "Imagen inválida.";
+    }
+  }
+}
+
 if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'toggle_source') {
   $ppId = (int)($_POST['provider_product_id'] ?? 0);
 
@@ -155,7 +169,8 @@ echo "<h3>Editar producto</h3>
 echo "<h3>Imágenes</h3>
 <form method='post' enctype='multipart/form-data'>
 <input type='hidden' name='csrf' value='".h(csrf_token())."'>
-<input type='hidden' name='action' value='update_images'>
+<input type='hidden' name='action' id='images_action' value='update_images'>
+<input type='hidden' name='delete_image_id' id='delete_image_id' value=''>
 <p><input type='file' name='images[]' multiple accept='image/*'></p>
 <input type='hidden' name='images_order' id='images_order' value=''>
 <ul id='images-list'>";
@@ -169,6 +184,7 @@ if ($product_images) {
  <span class='cover-label'>".h($cover_label)."</span>
  <button type='button' class='move-up'>↑</button>
  <button type='button' class='move-down'>↓</button>
+ <button type='button' class='img-delete' data-image-id='".h((string)$image['id'])."'>X</button>
 </li>";
   }
 } else {
@@ -181,6 +197,9 @@ echo "</ul>
 (function() {
   var list = document.getElementById('images-list');
   var orderInput = document.getElementById('images_order');
+  var deleteInput = document.getElementById('delete_image_id');
+  var actionInput = document.getElementById('images_action');
+  var form = list ? list.closest('form') : null;
   if (!list || !orderInput) return;
 
   function updateOrder() {
@@ -197,6 +216,15 @@ echo "</ul>
   }
 
   list.addEventListener('click', function(event) {
+    if (event.target.classList.contains('img-delete')) {
+      var imageId = event.target.getAttribute('data-image-id');
+      if (!imageId) return;
+      if (!confirm('¿Eliminar esta imagen?')) return;
+      if (deleteInput) deleteInput.value = imageId;
+      if (actionInput) actionInput.value = 'delete_image';
+      if (form) form.submit();
+      return;
+    }
     if (event.target.classList.contains('move-up') || event.target.classList.contains('move-down')) {
       var item = event.target.closest('li');
       if (!item) return;

@@ -69,6 +69,47 @@ function product_images_apply_order(PDO $pdo, int $product_id, string $images_or
   $pdo->commit();
 }
 
+function product_images_resequence(PDO $pdo, int $product_id): void {
+  $st = $pdo->prepare("SELECT id FROM product_images WHERE product_id=? ORDER BY position ASC, id ASC");
+  $st->execute([$product_id]);
+  $ids = $st->fetchAll(PDO::FETCH_COLUMN);
+  $pdo->beginTransaction();
+  $position = 1;
+  foreach ($ids as $id) {
+    $pdo->prepare("UPDATE product_images SET position=?, is_cover=? WHERE id=? AND product_id=?")
+        ->execute([$position, $position === 1 ? 1 : 0, $id, $product_id]);
+    $position++;
+  }
+  $pdo->commit();
+}
+
+function product_images_delete(PDO $pdo, int $product_id, int $image_id, string $upload_dir, array $image_sizes): bool {
+  $st = $pdo->prepare("SELECT filename_base FROM product_images WHERE id=? AND product_id=? LIMIT 1");
+  $st->execute([$image_id, $product_id]);
+  $filename_base = $st->fetchColumn();
+  if (!$filename_base) {
+    return false;
+  }
+
+  $pdo->prepare("DELETE FROM product_images WHERE id=? AND product_id=? LIMIT 1")
+      ->execute([$image_id, $product_id]);
+
+  $files = [];
+  foreach ($image_sizes as $size) {
+    $files[] = $upload_dir.'/'.product_image_with_size($filename_base, $size);
+  }
+  $files[] = $upload_dir.'/'.$filename_base;
+
+  foreach ($files as $file_path) {
+    if (is_file($file_path) && !unlink($file_path)) {
+      error_log("No se pudo borrar el archivo {$file_path}");
+    }
+  }
+
+  product_images_resequence($pdo, $product_id);
+  return true;
+}
+
 function product_images_sort_indices(array $files, ?array $order, bool $append_remaining = true): array {
   $total = isset($files['name']) ? count($files['name']) : 0;
   if ($total === 0) return [];
