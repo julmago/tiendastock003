@@ -1,4 +1,17 @@
 <?php
+$logDir = __DIR__.'/../_private/logs';
+if (!is_dir($logDir)) {
+  mkdir($logDir, 0775, true);
+}
+ini_set('log_errors', '1');
+ini_set('error_log', $logDir.'/php_error.log');
+register_shutdown_function(function() use ($logDir) {
+  $e = error_get_last();
+  if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+    error_log("[FATAL] ".$e['message']." in ".$e['file'].":".$e['line']."\n", 3, $logDir.'/fatal.log');
+  }
+});
+
 require __DIR__.'/../config.php';
 require __DIR__.'/../_inc/layout.php';
 require __DIR__.'/../_inc/pricing.php';
@@ -360,14 +373,14 @@ if ($action === 'new') {
 
     function clearCopyItems() {
       if (!imagesList) return;
-      var items = imagesList.querySelectorAll('li[data-kind="copy"]');
+      var items = imagesList.querySelectorAll(\"li[data-kind='copy']\");
       items.forEach(function(item) { item.remove(); });
       setPlaceholderIfEmpty();
     }
 
     function clearUploadItems() {
       if (!imagesList) return;
-      var items = imagesList.querySelectorAll('li[data-kind="upload"]');
+      var items = imagesList.querySelectorAll(\"li[data-kind='upload']\");
       items.forEach(function(item) { item.remove(); });
       setPlaceholderIfEmpty();
     }
