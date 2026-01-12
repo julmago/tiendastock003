@@ -14,6 +14,5 @@ echo "<p>Hola, <b>".h($retailer['display_name'])."</b> (".h($retailer['status'])
 <ul>
 <li><a href='/minorista/tienda.php'>Mi tienda minorista</a></li>
 <li><a href='/minorista/productos.php'>Productos</a></li>
-<li><a href='/minorista/mayorista.php'>Vincular mayorista</a></li>
 </ul>";
 page_footer();
