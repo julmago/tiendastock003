@@ -3,6 +3,44 @@
 $max_image_size_bytes = 10 * 1024 * 1024;
 $image_sizes = [1200, 600, 150];
 
+function product_images_schema(PDO $pdo): array {
+  $status = [
+    'table_exists' => false,
+    'has_owner_type' => false,
+    'has_owner_id' => false,
+    'has_product_id' => false,
+    'error' => null,
+  ];
+
+  try {
+    $db = $pdo->query("SELECT DATABASE()")->fetchColumn();
+    if (!$db) {
+      $status['error'] = 'No hay base de datos seleccionada.';
+      return $status;
+    }
+
+    $st = $pdo->prepare("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME='product_images'");
+    $st->execute([$db]);
+    $columns = $st->fetchAll(PDO::FETCH_COLUMN);
+    if (!$columns) {
+      return $status;
+    }
+    $status['table_exists'] = true;
+    $columns = array_map('strtolower', $columns);
+    $status['has_owner_type'] = in_array('owner_type', $columns, true);
+    $status['has_owner_id'] = in_array('owner_id', $columns, true);
+    $status['has_product_id'] = in_array('product_id', $columns, true);
+  } catch (Throwable $e) {
+    $status['error'] = $e->getMessage();
+  }
+
+  return $status;
+}
+
+function product_images_ready(array $schema): bool {
+  return !empty($schema['table_exists']) && !empty($schema['has_owner_type']) && !empty($schema['has_owner_id']);
+}
+
 function product_image_with_size(string $base, int $size): string {
   $dot = strrpos($base, '.');
   if ($dot === false) {
