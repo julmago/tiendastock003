@@ -1,20 +1,11 @@
 <?php
 require __DIR__.'/../config.php';
 require __DIR__.'/../_inc/layout.php';
-require __DIR__.'/../_inc/auth.php';
-csrf_check();
-
-if ($_SERVER['REQUEST_METHOD']==='POST') {
-  $u = login_user($pdo, $_POST['email']??'', $_POST['password']??'', ['seller']);
-  if ($u) { session_set_user($u); header('Location: /vendedor/'); exit; }
-  $err="Credenciales inválidas.";
-}
-page_header('Vendedor - Login');
-if (!empty($err)) echo "<p style='color:#b00'>".h($err)."</p>";
-echo "<form method='post'>
-<input type='hidden' name='csrf' value='".h(csrf_token())."'>
-<p><input name='email' placeholder='Email' style='width:320px'></p>
-<p><input name='password' type='password' placeholder='Contraseña' style='width:320px'></p>
-<button>Ingresar</button>
-</form>";
+// Cambio clave: acceso vendedor deprecado, reemplazado por roles mayorista/minorista.
+page_header('Acceso Vendedor');
+echo "<p>El acceso de vendedor fue reemplazado por cuentas separadas.</p>
+<ul>
+  <li><a href='/mayorista/login.php'>Login Mayorista</a></li>
+  <li><a href='/minorista/login.php'>Login Minorista</a></li>
+</ul>";
 page_footer();

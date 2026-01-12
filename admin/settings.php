@@ -25,7 +25,7 @@ page_header('Settings / Comisiones (superadmin)');
 if (!empty($msg)) echo "<p style='color:green'>".h($msg)."</p>";
 echo "<form method='post'>
 <input type='hidden' name='csrf' value='".h(csrf_token())."'>
-<p>Comisión vendedor (%): <input name='seller_fee_percent' value='".h($cur['seller_fee_percent'])."'></p>
+<p>Comisión tienda (%): <input name='seller_fee_percent' value='".h($cur['seller_fee_percent'])."'></p>
 <p>Comisión proveedor (%): <input name='provider_fee_percent' value='".h($cur['provider_fee_percent'])."'></p>
 <p>Extra MercadoPago (%): <input name='mp_extra_percent' value='".h($cur['mp_extra_percent'])."'></p>
 <button>Guardar</button>

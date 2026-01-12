@@ -45,7 +45,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
       if (!$p) continue;
       $price = current_sell_price($pdo, $store, $p);
       if ($price <= 0) { $err="El producto '".$p['title']."' no tiene stock."; break; }
-      $stock = provider_stock_sum($pdo, (int)$p['id']) + (int)$p['own_stock_qty'];
+      // Cambio clave: stock mayorista solo con inventario propio.
+      $stock = (int)$p['own_stock_qty'];
       if ($stock < (int)$qty) { $err="Stock insuficiente para '".$p['title']."'."; break; }
       $itemsTotal += ($price * (int)$qty);
       $lines[] = ['pid'=>(int)$pid,'qty'=>(int)$qty,'price'=>$price,'title'=>$p['title']];
@@ -53,8 +54,6 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
 
     if (empty($err) && $itemsTotal>0) {
       $sellerFeePercent = (float)setting($pdo,'seller_fee_percent','3');
-      $providerFeePercent = (float)setting($pdo,'provider_fee_percent','1');
-
       $sellerFee = $itemsTotal * ($sellerFeePercent/100.0);
       $mpExtra = ($method==='mercadopago') ? ($itemsTotal * ($extraPercent/100.0)) : 0.0;
       $grand = $itemsTotal + $mpExtra;
@@ -66,70 +65,38 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
             ->execute([(int)$store['id'], $method, $itemsTotal, $grand, $sellerFee, $mpExtra]);
         $orderId = (int)$pdo->lastInsertId();
 
-        $providerFeeTotal = 0.0;
-
         foreach($lines as $ln){
           $pid = (int)$ln['pid'];
           $qty = (int)$ln['qty'];
           $p = $map[$pid];
+          $upd = $pdo->prepare("UPDATE store_products SET own_stock_qty = own_stock_qty - ? WHERE id=? AND own_stock_qty >= ?");
+          $upd->execute([$qty, $pid, $qty]);
+          if ($upd->rowCount() === 0) throw new Exception("Sin stock propio para '".$ln['title']."'.");
 
-          $best = best_provider_source($pdo, (int)$pid);
+          $basePrice = (float)($p['own_stock_price'] ?? 0);
 
-          if ($best) {
-            $basePrice = (float)$best['base_price'];
-            $bestPP = (int)$best['provider_product_id'];
+          $pdo->prepare("INSERT INTO order_items(order_id,store_product_id,qty,unit_sell_price,line_total,unit_base_price)
+                        VALUES(?,?,?,?,?,?)")
+              ->execute([$orderId, $pid, $qty, $ln['price'], ($ln['price']*$qty), $basePrice]);
+          $itemId = (int)$pdo->lastInsertId();
 
-            $upd = $pdo->prepare("UPDATE warehouse_stock
-                                  SET qty_available = qty_available - ?
-                                  WHERE provider_product_id=? AND (qty_available - qty_reserved) >= ?");
-            $upd->execute([$qty, $bestPP, $qty]);
-            if ($upd->rowCount() === 0) throw new Exception("Sin stock en bodega para '".$ln['title']."'.");
-
-            $pdo->prepare("INSERT INTO order_items(order_id,store_product_id,qty,unit_sell_price,line_total,unit_base_price)
-                          VALUES(?,?,?,?,?,?)")
-                ->execute([$orderId, $pid, $qty, $ln['price'], ($ln['price']*$qty), $basePrice]);
-            $itemId = (int)$pdo->lastInsertId();
-
-            $pdo->prepare("INSERT INTO order_allocations(order_item_id,source_type,provider_product_id,qty_allocated,unit_base_price)
-                          VALUES(?, 'provider', ?, ?, ?)")
-                ->execute([$itemId, $bestPP, $qty, $basePrice]);
-
-            $providerFeeTotal += ($basePrice * $qty) * ($providerFeePercent/100.0);
-          } else {
-            $upd = $pdo->prepare("UPDATE store_products SET own_stock_qty = own_stock_qty - ? WHERE id=? AND own_stock_qty >= ?");
-            $upd->execute([$qty, $pid, $qty]);
-            if ($upd->rowCount() === 0) throw new Exception("Sin stock propio para '".$ln['title']."'.");
-
-            $basePrice = (float)($p['own_stock_price'] ?? 0);
-
-            $pdo->prepare("INSERT INTO order_items(order_id,store_product_id,qty,unit_sell_price,line_total,unit_base_price)
-                          VALUES(?,?,?,?,?,?)")
-                ->execute([$orderId, $pid, $qty, $ln['price'], ($ln['price']*$qty), $basePrice]);
-            $itemId = (int)$pdo->lastInsertId();
-
-            $pdo->prepare("INSERT INTO order_allocations(order_item_id,source_type,provider_product_id,qty_allocated,unit_base_price)
-                          VALUES(?, 'seller_own', NULL, ?, ?)")
-                ->execute([$itemId, $qty, $basePrice]);
-          }
+          $pdo->prepare("INSERT INTO order_allocations(order_item_id,source_type,provider_product_id,qty_allocated,unit_base_price)
+                        VALUES(?, 'seller_own', NULL, ?, ?)")
+              ->execute([$itemId, $qty, $basePrice]);
         }
 
-        $pdo->prepare("UPDATE orders SET provider_fee_amount=? WHERE id=?")->execute([$providerFeeTotal, $orderId]);
+        $pdo->prepare("UPDATE orders SET provider_fee_amount=? WHERE id=?")->execute([0, $orderId]);
         $pdo->prepare("INSERT INTO payments(order_id,method,status,amount) VALUES(?,?, 'pending', ?)")->execute([$orderId,$method,$grand]);
 
-        $sid = $pdo->prepare("SELECT seller_id FROM stores WHERE id=?");
+        $sid = $pdo->prepare("SELECT wholesaler_id FROM stores WHERE id=?");
         $sid->execute([(int)$store['id']]);
-        $sellerId = (int)($sid->fetch()['seller_id'] ?? 0);
+        $wholesalerId = (int)($sid->fetch()['wholesaler_id'] ?? 0);
 
-        $pdo->prepare("INSERT INTO fees_ledger(order_id,store_id,seller_id,provider_id,fee_type,amount) VALUES(?,?,?,?,?,?)")
-            ->execute([$orderId,(int)$store['id'],$sellerId,NULL,'seller_fee',$sellerFee]);
-
-        if ($providerFeeTotal>0) {
-          $pdo->prepare("INSERT INTO fees_ledger(order_id,store_id,seller_id,provider_id,fee_type,amount) VALUES(?,?,?,?,?,?)")
-              ->execute([$orderId,(int)$store['id'],$sellerId,NULL,'provider_fee',$providerFeeTotal]);
-        }
+        $pdo->prepare("INSERT INTO fees_ledger(order_id,store_id,wholesaler_id,retailer_id,provider_id,fee_type,amount) VALUES(?,?,?,?,?,?,?)")
+            ->execute([$orderId,(int)$store['id'],$wholesalerId,NULL,NULL,'seller_fee',$sellerFee]);
         if ($mpExtra>0) {
-          $pdo->prepare("INSERT INTO fees_ledger(order_id,store_id,seller_id,provider_id,fee_type,amount) VALUES(?,?,?,?,?,?)")
-              ->execute([$orderId,(int)$store['id'],$sellerId,NULL,'mp_extra',$mpExtra]);
+          $pdo->prepare("INSERT INTO fees_ledger(order_id,store_id,wholesaler_id,retailer_id,provider_id,fee_type,amount) VALUES(?,?,?,?,?,?,?)")
+              ->execute([$orderId,(int)$store['id'],$wholesalerId,NULL,NULL,'mp_extra',$mpExtra]);
         }
 
         $pdo->commit();

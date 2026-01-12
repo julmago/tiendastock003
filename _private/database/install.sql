@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   email VARCHAR(190) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
-  role ENUM('superadmin','admin','provider','seller') NOT NULL,
+  role ENUM('superadmin','admin','provider','wholesaler','retailer') NOT NULL,
   status ENUM('active','pending','disabled') NOT NULL DEFAULT 'active',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
@@ -35,6 +35,56 @@ CREATE TABLE IF NOT EXISTS providers (
   UNIQUE KEY uq_provider_user (user_id),
   KEY idx_provider_status (status),
   CONSTRAINT fk_providers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS wholesalers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  display_name VARCHAR(190) NOT NULL,
+  status ENUM('pending','active','disabled') NOT NULL DEFAULT 'pending',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_wholesaler_user (user_id),
+  KEY idx_wholesaler_status (status),
+  CONSTRAINT fk_wholesalers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS retailers (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  display_name VARCHAR(190) NOT NULL,
+  status ENUM('pending','active','disabled') NOT NULL DEFAULT 'active',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_retailer_user (user_id),
+  KEY idx_retailer_status (status),
+  CONSTRAINT fk_retailers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS wholesaler_provider (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  wholesaler_id BIGINT UNSIGNED NOT NULL,
+  provider_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_wholesaler_provider (wholesaler_id, provider_id),
+  KEY idx_wp_provider (provider_id),
+  CONSTRAINT fk_wp_wholesaler FOREIGN KEY (wholesaler_id) REFERENCES wholesalers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_wp_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS retailer_wholesaler (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  retailer_id BIGINT UNSIGNED NOT NULL,
+  wholesaler_id BIGINT UNSIGNED NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_retailer_wholesaler (retailer_id),
+  KEY idx_rw_wholesaler (wholesaler_id),
+  CONSTRAINT fk_rw_retailer FOREIGN KEY (retailer_id) REFERENCES retailers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_rw_wholesaler FOREIGN KEY (wholesaler_id) REFERENCES wholesalers(id) ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS provider_products (
@@ -92,21 +142,10 @@ CREATE TABLE IF NOT EXISTS warehouse_receipts (
   CONSTRAINT fk_wr_admin FOREIGN KEY (created_by_user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS sellers (
-  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id BIGINT UNSIGNED NOT NULL,
-  display_name VARCHAR(190) NOT NULL,
-  wholesale_status ENUM('not_requested','pending','approved','rejected') NOT NULL DEFAULT 'not_requested',
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_seller_user (user_id),
-  CONSTRAINT fk_sellers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 CREATE TABLE IF NOT EXISTS stores (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  seller_id BIGINT UNSIGNED NOT NULL,
+  wholesaler_id BIGINT UNSIGNED NULL,
+  retailer_id BIGINT UNSIGNED NULL,
   store_type ENUM('retail','wholesale') NOT NULL,
   name VARCHAR(190) NOT NULL,
   slug VARCHAR(60) NOT NULL,
@@ -116,8 +155,10 @@ CREATE TABLE IF NOT EXISTS stores (
   updated_at DATETIME NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   UNIQUE KEY uq_store_slug (slug),
-  UNIQUE KEY uq_seller_storetype (seller_id, store_type),
-  CONSTRAINT fk_store_seller FOREIGN KEY (seller_id) REFERENCES sellers(id) ON DELETE CASCADE
+  UNIQUE KEY uq_wholesaler_storetype (wholesaler_id, store_type),
+  UNIQUE KEY uq_retailer_storetype (retailer_id, store_type),
+  CONSTRAINT fk_store_wholesaler FOREIGN KEY (wholesaler_id) REFERENCES wholesalers(id) ON DELETE CASCADE,
+  CONSTRAINT fk_store_retailer FOREIGN KEY (retailer_id) REFERENCES retailers(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS store_payment_methods (
@@ -223,7 +264,8 @@ CREATE TABLE IF NOT EXISTS fees_ledger (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   order_id BIGINT UNSIGNED NOT NULL,
   store_id BIGINT UNSIGNED NOT NULL,
-  seller_id BIGINT UNSIGNED NOT NULL,
+  wholesaler_id BIGINT UNSIGNED NULL,
+  retailer_id BIGINT UNSIGNED NULL,
   provider_id BIGINT UNSIGNED NULL,
   fee_type ENUM('seller_fee','provider_fee','mp_extra') NOT NULL,
   amount DECIMAL(12,2) NOT NULL,
@@ -232,7 +274,8 @@ CREATE TABLE IF NOT EXISTS fees_ledger (
   KEY idx_fee_order (order_id),
   CONSTRAINT fk_fee_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
   CONSTRAINT fk_fee_store FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE RESTRICT,
-  CONSTRAINT fk_fee_seller FOREIGN KEY (seller_id) REFERENCES sellers(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_fee_wholesaler FOREIGN KEY (wholesaler_id) REFERENCES wholesalers(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_fee_retailer FOREIGN KEY (retailer_id) REFERENCES retailers(id) ON DELETE RESTRICT,
   CONSTRAINT fk_fee_provider FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

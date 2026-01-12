@@ -304,3 +304,8 @@ function product_images_copy_from_provider(PDO $pdo, int $source_product_id, int
 
   return $next_position;
 }
+
+function product_images_copy_from_store(PDO $pdo, int $source_product_id, int $target_product_id, array $images, string $source_dir, string $target_dir, array $image_sizes, array &$image_errors, ?int &$next_position = null): int {
+  // Cambio clave: copia de imágenes entre catálogos store_product (mayorista -> minorista).
+  return product_images_copy_from_provider($pdo, $source_product_id, $target_product_id, $images, $source_dir, $target_dir, $image_sizes, $image_errors, $next_position);
+}
