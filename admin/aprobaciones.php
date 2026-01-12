@@ -11,9 +11,10 @@ if (($_POST['action'] ?? '') === 'approve_provider') {
   $msg="Proveedor aprobado.";
 }
 if (($_POST['action'] ?? '') === 'approve_wholesale') {
-  $sid = (int)($_POST['seller_id'] ?? 0);
-  $pdo->prepare("UPDATE sellers SET wholesale_status='approved' WHERE id=?")->execute([$sid]);
-  $msg="Vendedor mayorista aprobado.";
+  $wid = (int)($_POST['wholesaler_id'] ?? 0);
+  $pdo->prepare("UPDATE wholesalers SET status='active' WHERE id=?")->execute([$wid]);
+  $pdo->prepare("UPDATE users u JOIN wholesalers w ON w.user_id=u.id SET u.status='active' WHERE w.id=?")->execute([$wid]);
+  $msg="Mayorista aprobado.";
 }
 
 $pendingProviders = $pdo->query("
@@ -23,9 +24,9 @@ $pendingProviders = $pdo->query("
 ")->fetchAll();
 
 $pendingWholesale = $pdo->query("
-  SELECT s.id, u.email, s.display_name
-  FROM sellers s JOIN users u ON u.id=s.user_id
-  WHERE s.wholesale_status='pending' ORDER BY s.id DESC
+  SELECT w.id, u.email, w.display_name
+  FROM wholesalers w JOIN users u ON u.id=w.user_id
+  WHERE w.status='pending' ORDER BY w.id DESC
 ")->fetchAll();
 
 page_header('Aprobaciones');
@@ -66,7 +67,7 @@ else {
         <form method='post' style='margin:0'>
           <input type='hidden' name='csrf' value='".h(csrf_token())."'>
           <input type='hidden' name='action' value='approve_wholesale'>
-          <input type='hidden' name='seller_id' value='".h((string)$s['id'])."'>
+          <input type='hidden' name='wholesaler_id' value='".h((string)$s['id'])."'>
           <button>Aprobar</button>
         </form>
       </td>
