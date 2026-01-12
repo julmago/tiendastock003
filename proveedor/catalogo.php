@@ -15,7 +15,27 @@ $edit_product = null;
 $product_images = [];
 $image_errors = [];
 
-if ($_SERVER['REQUEST_METHOD']==='POST') {
+if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'delete_image') {
+  $product_id = isset($_POST['product_id']) ? (int)$_POST['product_id'] : 0;
+  $image_id = isset($_POST['delete_image_id']) ? (int)$_POST['delete_image_id'] : 0;
+  if ($product_id <= 0 || $image_id <= 0) {
+    $err = "Imagen inválida.";
+  } else {
+    $st = $pdo->prepare("SELECT id FROM provider_products WHERE id=? AND provider_id=? LIMIT 1");
+    $st->execute([$product_id, (int)$p['id']]);
+    if (!$st->fetch()) {
+      $err = "Producto inválido.";
+    } else {
+      $upload_dir = __DIR__.'/../uploads/products/'.$product_id;
+      if (product_images_delete($pdo, $product_id, $image_id, $upload_dir, $image_sizes)) {
+        $msg = "Imagen eliminada.";
+      } else {
+        $err = "Imagen inválida.";
+      }
+      $edit_id = $product_id;
+    }
+  }
+} elseif ($_SERVER['REQUEST_METHOD']==='POST') {
   if (($p['status'] ?? '') !== 'active') $err="Cuenta pendiente de aprobación.";
   else {
     $title = trim((string)($_POST['title'] ?? ''));
@@ -84,7 +104,9 @@ if (!empty($image_errors)) {
 }
 echo "<form method='post' enctype='multipart/form-data'>
 <input type='hidden' name='csrf' value='".h(csrf_token())."'>
+<input type='hidden' name='action' id='product_action' value='save_product'>
 <input type='hidden' name='product_id' value='".h((string)($edit_product['id'] ?? ''))."'>
+<input type='hidden' name='delete_image_id' id='delete_image_id' value=''>
 <p>Título: <input name='title' style='width:520px' value='".h($edit_product['title'] ?? '')."'></p>
 <p>SKU: <input name='sku' style='width:220px' value='".h($edit_product['sku'] ?? '')."'></p>
 <p>Código universal (8-14 dígitos): <input name='universal_code' style='width:220px' value='".h($edit_product['universal_code'] ?? '')."'></p>
@@ -105,6 +127,7 @@ if ($edit_product && $product_images) {
  <span class='cover-label'>".h($cover_label)."</span>
  <button type='button' class='move-up'>↑</button>
  <button type='button' class='move-down'>↓</button>
+ <button type='button' class='img-delete' data-image-id='".h((string)$image['id'])."'>X</button>
 </li>";
   }
 } else {
@@ -137,7 +160,20 @@ echo "
     orderInput.value = ids.join(',');
   }
 
+  var deleteInput = document.getElementById('delete_image_id');
+  var actionInput = document.getElementById('product_action');
+  var form = list.closest('form');
+
   list.addEventListener('click', function(event) {
+    if (event.target.classList.contains('img-delete')) {
+      var imageId = event.target.getAttribute('data-image-id');
+      if (!imageId) return;
+      if (!confirm('¿Eliminar esta imagen?')) return;
+      if (deleteInput) deleteInput.value = imageId;
+      if (actionInput) actionInput.value = 'delete_image';
+      if (form) form.submit();
+      return;
+    }
     if (event.target.classList.contains('move-up') || event.target.classList.contains('move-down')) {
       var item = event.target.closest('li');
       if (!item) return;
