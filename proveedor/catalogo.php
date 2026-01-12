@@ -1,42 +1,9 @@
 <?php
 require __DIR__.'/../config.php';
 require __DIR__.'/../_inc/layout.php';
+require __DIR__.'/../lib/product_images.php';
 csrf_check();
 require_role('provider','/proveedor/login.php');
-
-$max_image_size_bytes = 10 * 1024 * 1024;
-$image_sizes = [1200, 600, 150];
-
-function product_image_with_size(string $base, int $size): string {
-  $dot = strrpos($base, '.');
-  if ($dot === false) {
-    return $base.'_'.$size;
-  }
-  return substr($base, 0, $dot).'_'.$size.substr($base, $dot);
-}
-
-function prepare_png_canvas($image, int $width, int $height): void {
-  imagealphablending($image, false);
-  imagesavealpha($image, true);
-  $transparent = imagecolorallocatealpha($image, 0, 0, 0, 127);
-  imagefilledrectangle($image, 0, 0, $width, $height, $transparent);
-}
-
-function save_resized_square($square, int $size, string $dest, int $image_type): bool {
-  $resized = imagecreatetruecolor($size, $size);
-  if ($image_type === IMAGETYPE_PNG) {
-    prepare_png_canvas($resized, $size, $size);
-  }
-  $square_size = imagesx($square);
-  imagecopyresampled($resized, $square, 0, 0, 0, 0, $size, $size, $square_size, $square_size);
-  if ($image_type === IMAGETYPE_PNG) {
-    $result = imagepng($resized, $dest, 6);
-  } else {
-    $result = imagejpeg($resized, $dest, 85);
-  }
-  imagedestroy($resized);
-  return $result;
-}
 
 $st = $pdo->prepare("SELECT id, status FROM providers WHERE user_id=? LIMIT 1");
 $st->execute([(int)$_SESSION['uid']]);
@@ -86,111 +53,8 @@ if ($_SERVER['REQUEST_METHOD']==='POST') {
     if (!is_dir($upload_dir)) {
       mkdir($upload_dir, 0775, true);
     }
-
-    if (!empty($_FILES['images']['name'][0])) {
-      if (!function_exists('imagecreatefromjpeg')) {
-        $image_errors[] = 'GD no está disponible para procesar imágenes.';
-      } else {
-        $st = $pdo->prepare("SELECT COALESCE(MAX(position), 0) FROM product_images WHERE product_id=?");
-        $st->execute([$product_id]);
-        $next_position = (int)$st->fetchColumn();
-        foreach ($_FILES['images']['name'] as $idx => $name) {
-          $error = $_FILES['images']['error'][$idx] ?? UPLOAD_ERR_NO_FILE;
-          if ($error !== UPLOAD_ERR_OK) {
-            if ($error !== UPLOAD_ERR_NO_FILE) {
-              $image_errors[] = "Error al subir {$name}.";
-            }
-            continue;
-          }
-          $tmp_path = $_FILES['images']['tmp_name'][$idx] ?? '';
-          $size = (int)($_FILES['images']['size'][$idx] ?? 0);
-          if ($size <= 0 || $size > $max_image_size_bytes) {
-            $image_errors[] = "La imagen {$name} supera el tamaño permitido.";
-            continue;
-          }
-          $info = getimagesize($tmp_path);
-          if ($info === false) {
-            $image_errors[] = "El archivo {$name} no es una imagen válida.";
-            continue;
-          }
-          $image_type = $info[2];
-          if (!in_array($image_type, [IMAGETYPE_JPEG, IMAGETYPE_PNG], true)) {
-            $image_errors[] = "Formato no soportado para {$name}.";
-            continue;
-          }
-
-          $ext = $image_type === IMAGETYPE_PNG ? 'png' : 'jpg';
-          $base_name = bin2hex(random_bytes(16)).'.'.$ext;
-          if ($image_type === IMAGETYPE_PNG) {
-            $source = imagecreatefrompng($tmp_path);
-          } else {
-            $source = imagecreatefromjpeg($tmp_path);
-          }
-          if (!$source) {
-            $image_errors[] = "No se pudo procesar {$name}.";
-            continue;
-          }
-          $width = imagesx($source);
-          $height = imagesy($source);
-          $side = min($width, $height);
-          $src_x = (int)(($width - $side) / 2);
-          $src_y = (int)(($height - $side) / 2);
-          $square = imagecreatetruecolor($side, $side);
-          if ($image_type === IMAGETYPE_PNG) {
-            prepare_png_canvas($square, $side, $side);
-          }
-          imagecopyresampled($square, $source, 0, 0, $src_x, $src_y, $side, $side, $side, $side);
-          imagedestroy($source);
-
-          $saved = true;
-          foreach ($image_sizes as $target_size) {
-            $dest = $upload_dir.'/'.product_image_with_size($base_name, $target_size);
-            if (!save_resized_square($square, $target_size, $dest, $image_type)) {
-              $saved = false;
-              break;
-            }
-          }
-          imagedestroy($square);
-
-          if (!$saved) {
-            $image_errors[] = "No se pudo guardar {$name}.";
-            continue;
-          }
-          $next_position++;
-          $is_cover = $next_position === 1 ? 1 : 0;
-          $pdo->prepare("INSERT INTO product_images(product_id, filename_base, position, is_cover) VALUES(?,?,?,?)")
-              ->execute([$product_id, $base_name, $next_position, $is_cover]);
-        }
-      }
-    }
-
-    $images_order_raw = trim((string)($_POST['images_order'] ?? ''));
-    if ($images_order_raw !== '') {
-      $ids = array_filter(array_map('intval', explode(',', $images_order_raw)));
-      $st = $pdo->prepare("SELECT id FROM product_images WHERE product_id=?");
-      $st->execute([$product_id]);
-      $existing_ids = $st->fetchAll(PDO::FETCH_COLUMN);
-      $existing_ids = array_map('intval', $existing_ids);
-      $ordered = [];
-      foreach ($ids as $id) {
-        if (in_array($id, $existing_ids, true) && !in_array($id, $ordered, true)) {
-          $ordered[] = $id;
-        }
-      }
-      foreach ($existing_ids as $id) {
-        if (!in_array($id, $ordered, true)) {
-          $ordered[] = $id;
-        }
-      }
-      $pdo->beginTransaction();
-      $position = 1;
-      foreach ($ordered as $id) {
-        $pdo->prepare("UPDATE product_images SET position=?, is_cover=? WHERE id=? AND product_id=?")
-            ->execute([$position, $position === 1 ? 1 : 0, $id, $product_id]);
-        $position++;
-      }
-      $pdo->commit();
-    }
+    product_images_process_uploads($pdo, $product_id, $_FILES['images'] ?? [], $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors);
+    product_images_apply_order($pdo, $product_id, (string)($_POST['images_order'] ?? ''));
   }
 }
 
@@ -205,9 +69,7 @@ if ($edit_id > 0) {
 }
 
 if ($edit_id > 0) {
-  $st = $pdo->prepare("SELECT id, filename_base, position FROM product_images WHERE product_id=? ORDER BY position ASC");
-  $st->execute([$edit_id]);
-  $product_images = $st->fetchAll();
+  $product_images = product_images_fetch($pdo, $edit_id);
 }
 
 $rows = $pdo->prepare("SELECT id,title,sku,universal_code,base_price FROM provider_products WHERE provider_id=? ORDER BY id DESC");
