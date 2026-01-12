@@ -6,8 +6,18 @@ require __DIR__.'/../_inc/pricing.php';
 $BASE = '/mayorista/';
 $STORE_TYPE = 'wholesale';
 
-$slug = slugify((string)($_GET['slug'] ?? ''));
-if (!$slug) { header("Location: ".$BASE); exit; }
+$path = (string)(parse_url($_SERVER['REQUEST_URI'] ?? '', PHP_URL_PATH) ?? '');
+$rawSlug = (string)($_GET['slug'] ?? '');
+if ($rawSlug === '') {
+  $pathSlug = $path;
+  if ($pathSlug !== '' && strpos($pathSlug, $BASE) === 0) {
+    $pathSlug = substr($pathSlug, strlen($BASE));
+  }
+  $rawSlug = trim($pathSlug, '/');
+}
+$slug = slugify($rawSlug);
+error_log("storefront router mayorista: host=".($_SERVER['HTTP_HOST'] ?? '')." path=".$path." raw_slug=".$rawSlug." slug=".$slug);
+if (!$slug) { http_response_code(404); exit('Tienda no encontrada'); }
 
 $st = $pdo->prepare("SELECT * FROM stores WHERE slug=? AND status='active' AND store_type=? LIMIT 1");
 $st->execute([$slug, $STORE_TYPE]);
