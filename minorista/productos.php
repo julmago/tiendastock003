@@ -1,10 +1,28 @@
 <?php
-require __DIR__.'/../config.php';
-require __DIR__.'/../_inc/layout.php';
-require __DIR__.'/../_inc/pricing.php';
-require __DIR__.'/../lib/product_images.php';
-csrf_check();
-require_role('retailer','/minorista/login.php');
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+$logDir = __DIR__.'/../logs';
+if (!is_dir($logDir)) {
+  mkdir($logDir, 0775, true);
+}
+register_shutdown_function(function () {
+  $e = error_get_last();
+  if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR], true)) {
+    file_put_contents(
+      __DIR__.'/../logs/minorista_500.log',
+      date('c')." FATAL: {$e['message']} in {$e['file']}:{$e['line']}\n",
+      FILE_APPEND
+    );
+  }
+});
+
+try {
+  require __DIR__.'/../config.php';
+  require __DIR__.'/../_inc/layout.php';
+  require __DIR__.'/../_inc/pricing.php';
+  require __DIR__.'/../lib/product_images.php';
+  csrf_check();
+  require_role('retailer','/minorista/login.php');
 
 $st = $pdo->prepare("SELECT id FROM retailers WHERE user_id=? LIMIT 1");
 $st->execute([(int)$_SESSION['uid']]);
@@ -382,14 +400,14 @@ if ($action === 'new') {
 
     function clearCopyItems() {
       if (!imagesList) return;
-      var items = imagesList.querySelectorAll('li[data-kind="copy"]');
+      var items = imagesList.querySelectorAll('li[data-kind=\"copy\"]');
       items.forEach(function(item) { item.remove(); });
       setPlaceholderIfEmpty();
     }
 
     function clearUploadItems() {
       if (!imagesList) return;
-      var items = imagesList.querySelectorAll('li[data-kind="upload"]');
+      var items = imagesList.querySelectorAll('li[data-kind=\"upload\"]');
       items.forEach(function(item) { item.remove(); });
       setPlaceholderIfEmpty();
     }
@@ -486,4 +504,8 @@ if ($action === 'new') {
   })();
   </script>";
 }
-page_footer();
+  page_footer();
+} catch (Throwable $t) {
+  file_put_contents(__DIR__.'/../logs/minorista_500.log', date('c')." EX: ".$t."\n", FILE_APPEND);
+  throw $t;
+}

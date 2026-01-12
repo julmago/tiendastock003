@@ -22,6 +22,11 @@ try {
   );
 } catch (Throwable $e) {
   http_response_code(500);
+  $logDir = __DIR__.'/logs';
+  if (!is_dir($logDir)) {
+    mkdir($logDir, 0775, true);
+  }
+  file_put_contents($logDir.'/minorista_500.log', date('c')." EX: ".$e."\n", FILE_APPEND);
   echo "Error DB: " . htmlspecialchars($e->getMessage(), ENT_QUOTES, 'UTF-8');
   exit;
 }
