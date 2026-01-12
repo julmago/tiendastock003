@@ -2,6 +2,7 @@
 require __DIR__.'/../config.php';
 require __DIR__.'/../_inc/layout.php';
 require __DIR__.'/../_inc/pricing.php';
+require __DIR__.'/../lib/product_images.php';
 csrf_check();
 require_role('seller','/vendedor/login.php');
 
@@ -22,6 +23,8 @@ $product = $productSt->fetch();
 if (!$product) { page_header('Producto'); echo "<p>Producto inválido.</p>"; page_footer(); exit; }
 
 $storeId = (int)$product['store_id'];
+$product_images = [];
+$image_errors = [];
 
 if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'update_info') {
   $title = trim((string)($_POST['title'] ?? ''));
@@ -52,6 +55,18 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'update_
   }
 }
 
+if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'update_images') {
+  $upload_dir = __DIR__.'/../uploads/products/'.$productId;
+  if (!is_dir($upload_dir)) {
+    mkdir($upload_dir, 0775, true);
+  }
+  product_images_process_uploads($pdo, $productId, $_FILES['images'] ?? [], $upload_dir, $image_sizes, $max_image_size_bytes, $image_errors);
+  product_images_apply_order($pdo, $productId, (string)($_POST['images_order'] ?? ''));
+  if (!$image_errors) {
+    $msg = "Imágenes actualizadas.";
+  }
+}
+
 if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'toggle_source') {
   $ppId = (int)($_POST['provider_product_id'] ?? 0);
 
@@ -78,6 +93,7 @@ if ($_SERVER['REQUEST_METHOD']==='POST' && ($_POST['action'] ?? '') === 'unlink_
 
 $productSt->execute([$productId,(int)$seller['id']]);
 $product = $productSt->fetch();
+$product_images = product_images_fetch($pdo, $productId);
 
 $provStock = provider_stock_sum($pdo, (int)$product['id']);
 $sellDetails = current_sell_price_details($pdo, $product, $product);
@@ -114,6 +130,9 @@ $linkedProducts = $linkedSt->fetchAll();
 page_header('Producto');
 if (!empty($msg)) echo "<p style='color:green'>".h($msg)."</p>";
 if (!empty($err)) echo "<p style='color:#b00'>".h($err)."</p>";
+if (!empty($image_errors)) {
+  echo "<p style='color:#b00'>".h(implode(' ', $image_errors))."</p>";
+}
 
 echo "<p><a href='productos.php?store_id=".h((string)$storeId)."'>← Volver al listado</a></p>";
 
@@ -132,6 +151,73 @@ echo "<h3>Editar producto</h3>
 <p>Descripción:<br><textarea name='description' rows='4' style='width:90%'>".h((string)($product['description']??''))."</textarea></p>
 <button>Guardar cambios</button>
 </form><hr>";
+
+echo "<h3>Imágenes</h3>
+<form method='post' enctype='multipart/form-data'>
+<input type='hidden' name='csrf' value='".h(csrf_token())."'>
+<input type='hidden' name='action' value='update_images'>
+<p><input type='file' name='images[]' multiple accept='image/*'></p>
+<input type='hidden' name='images_order' id='images_order' value=''>
+<ul id='images-list'>";
+if ($product_images) {
+  foreach ($product_images as $index => $image) {
+    $thumb = product_image_with_size($image['filename_base'], 150);
+    $thumb_url = "/uploads/products/".h((string)$productId)."/".h($thumb);
+    $cover_label = $index === 0 ? "Portada" : "";
+    echo "<li data-id='".h((string)$image['id'])."'>
+<img src='".$thumb_url."' alt='' width='80' height='80'>
+ <span class='cover-label'>".h($cover_label)."</span>
+ <button type='button' class='move-up'>↑</button>
+ <button type='button' class='move-down'>↓</button>
+</li>";
+  }
+} else {
+  echo "<li>No hay imágenes cargadas.</li>";
+}
+echo "</ul>
+<button>Guardar imágenes</button>
+</form>
+<script>
+(function() {
+  var list = document.getElementById('images-list');
+  var orderInput = document.getElementById('images_order');
+  if (!list || !orderInput) return;
+
+  function updateOrder() {
+    var ids = [];
+    var items = list.querySelectorAll('li[data-id]');
+    items.forEach(function(item, index) {
+      ids.push(item.getAttribute('data-id'));
+      var label = item.querySelector('.cover-label');
+      if (label) {
+        label.textContent = index === 0 ? 'Portada' : '';
+      }
+    });
+    orderInput.value = ids.join(',');
+  }
+
+  list.addEventListener('click', function(event) {
+    if (event.target.classList.contains('move-up') || event.target.classList.contains('move-down')) {
+      var item = event.target.closest('li');
+      if (!item) return;
+      if (event.target.classList.contains('move-up')) {
+        var prev = item.previousElementSibling;
+        if (prev && prev.hasAttribute('data-id')) {
+          list.insertBefore(item, prev);
+        }
+      } else {
+        var next = item.nextElementSibling;
+        if (next) {
+          list.insertBefore(next, item);
+        }
+      }
+      updateOrder();
+    }
+  });
+
+  updateOrder();
+})();
+</script><hr>";
 
 echo "<h3>Stock y precio</h3>";
 if (!empty($minAppliedMsg)) echo "<p style='color:#b00'>".h($minAppliedMsg)."</p>";
